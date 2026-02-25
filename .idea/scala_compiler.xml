@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ScalaCompilerConfiguration">
-    <profile name="sbt 1" modules="cats-effect,scala3-simple" />
+    <option name="separateProdTestSources" value="true" />
+    <profile name="sbt 1" modules="cats-effect,cats-effect.main,cats-effect.test,scala3-simple" />
   </component>
 </project>
