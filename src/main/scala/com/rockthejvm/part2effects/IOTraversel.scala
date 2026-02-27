@@ -57,8 +57,7 @@ object IOTraversel extends IOApp.Simple {
 
   // hard version
   def sequence_v2[F[_] : Traverse, A](listOfIOs: F[IO[A]]): IO[F[A]] =
-    listOfIOs.parTraverse(identity)
-  //???
+    Traverse[F].traverse(listOfIOs)(identity)
 
   // parallel version
   def parSequence[A](listOfIOs: List[IO[A]]): IO[List[A]] =
@@ -68,8 +67,14 @@ object IOTraversel extends IOApp.Simple {
   def parSequence_v2[F[_] : Traverse, A](listOfIOs: F[IO[A]]): IO[F[A]] =
     listOfIOs.parTraverse(identity)
 
+  // existing sequence API
+  val singleIO_v2: IO[List[Int]] = listTraverse.sequence(ios)
+
+  // parallel sequencing
+  val parallelSingleIO_v2: IO[List[Int]] = parSequence(ios) // from the exercise
+  val parallelSingleIO_v3: IO[List[Int]] = ios.parSequence  // extension method from the Parallel syntax package
 
   override def run =
-    parallelSingleIO.map(_.sum).debug.void
+    parallelSingleIO_v3.map(_.sum).debug.void
     // singleIO.void
 }
