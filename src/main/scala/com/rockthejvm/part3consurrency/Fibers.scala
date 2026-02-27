@@ -3,7 +3,7 @@ package com.rockthejvm.part3consurrency
 import cats.effect.kernel.Outcome.{Canceled, Errored, Succeeded}
 import cats.effect.{Fiber, IO, IOApp, Outcome}
 
-import concurrent.duration.DurationInt
+import concurrent.duration.{DurationInt, FiniteDuration}
 
 object Fibers extends IOApp.Simple {
 
@@ -64,6 +64,72 @@ object Fibers extends IOApp.Simple {
       result <- fib.join
     } yield result
   }
+
+  /**
+   * Exercises
+   *  1. Write a function that runs on IO on another thread, and, depending on the result of the fiber
+   *    - return the result in an IO
+   *    - if errored or cancelled, return a failed IO
+   *
+   * 2. Write a function that takes two IOs, runs on different fibers and returns an IO with a tuple containing both results
+   *    - if both IOs complete successfully, tuple their results
+   *    - if the first IO returns an error, raise that error (ignoring the second IO's result/error)
+   *    - if the first IO doesn't error but second IO returns an error, raise the error
+   *    - if one (or both) cancelled, raise a RuntimeException
+   *
+   * 3. Write a function that adds a timeout to an IO:
+   *    - IO runs on a fiber
+   *    - if the timeout duration passes, then the fiber is cancelled
+   *    - the method returns on IO[A] which contains
+   *      - the original value if the computation is successful before the timeout signal
+   *      - the exception if the computation is failed before the timeout signal
+   *      - a RuntimeException if it times out (i.e. cancelled by the timeout)
+   */
+  // 1
+  def processResultsFromFiber[A](io: IO[A]): IO[A] = {
+    val outcome = for {
+      fib <- io.start
+      result <- fib.join
+    } yield result
+
+    outcome.flatMap {
+      case Succeeded(a) => a
+      case Errored(_) => IO.raiseError(new RuntimeException("errored"))
+      case Canceled() => IO.raiseError(new RuntimeException("errored"))
+    }
+  }
+
+  // 2
+  def tupleIOs[A, B](ioa: IO[A], iob: IO[B]): IO[(A, B)] = {
+      val aOut = for {
+        fibA <- ioa.start
+        aResult <- fibA.join
+      } yield aResult
+
+      val bOut = for {
+        fibB <- iob.start
+        bResult <- fibB.join
+      } yield bResult
+
+      aOut.flatMap {
+          case Succeeded(aIO) => bOut.flatMap{
+            case Succeeded(bIO) => aIO.flatMap(a => bIO.flatMap(b => IO((a, b))))
+            case Errored(e) => IO.raiseError(e)
+            case Canceled() => IO.raiseError(new RuntimeException("at least one got cancelled"))
+            }
+          case Canceled() => bOut.flatMap {
+            case Canceled() => IO.raiseError(new RuntimeException("at least one got cancelled"))
+          }
+          case Errored(e) => IO.raiseError(e)
+          case _ => bOut.flatMap {
+                  case Errored(e) => IO.raiseError(e)
+              }
+      }
+  }
+
+  // 3
+  def timeout[A](io: IO[A], duration: FiniteDuration): IO[A] =
+    io.timeout(duration)
 
   override def run: IO[Unit] =
     testCancel()
