@@ -1,4 +1,4 @@
-package com.rockthejvm.part3consurrency
+package com.rockthejvm.part3concurrency
 
 import cats.effect.kernel.Outcome.{Canceled, Errored, Succeeded, errored}
 import cats.effect.{Fiber, IO, IOApp, Outcome}
