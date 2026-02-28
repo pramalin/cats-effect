@@ -1,6 +1,6 @@
 package com.rockthejvm.part3concurrency
 
-import cats.effect.{IO, IOApp}
+import cats.effect.{IO, IOApp, Resource}
 
 import java.io.{File, FileReader}
 import java.util.Scanner
@@ -55,11 +55,52 @@ object Resources extends IOApp.Simple {
 
   def bracketReadFile(path: String): IO[Unit] =
     IO(s"opening file at $path") >>
-      openFileScanner(path).bracket{scanner =>
+      openFileScanner(path).bracket {scanner =>
         readLineByLine(scanner)
       } { scanner =>
         IO(s"closing file at $path").debug >> IO(scanner.close())
       }
 
-  override def run: IO[Unit] = bracketReadFile("src/main/scala/com/rockthejvm/part3concurrency/Resources.scala")
+
+  /**
+   *  Resources
+   */
+  def connFromConfig(path: String): IO[Unit] = {
+      openFileScanner(path)
+        .bracket { scanner =>
+          // acquire a connection based on the file
+          IO(new Connection(scanner.nextLine())).bracket { conn =>
+            conn.open() >> IO.never
+          }(conn => conn.close().void)
+        }(scanner => IO("closing file").debug >> IO(scanner.close()))
+      // nesting resource are tedious
+    }
+
+  val connectionResource = Resource.make(IO(new Connection("rockthejvm.com")))(conn => conn.close().void)
+  // ... at a later part of your code
+  val resourceFetchUrl = for {
+    fib <- connectionResource.use(conn => conn.open() >> IO.never).start
+    _ <- IO.sleep(1.second) >> fib.cancel
+  } yield ()
+
+
+  // resources are equivalent to brackets
+  val simpleResource = IO("some resource")
+  val usingResource: String => IO[String] = string => IO(s"using the string: $string").debug
+  val releaseResource: String => IO[Unit] = string => IO(s"finalizing the string: $string").debug.void
+
+  val usingResourceWithBracket = simpleResource.bracket(usingResource)(releaseResource)
+  val usingResourceWithResource = Resource.make(simpleResource)(releaseResource)
+
+  /**
+   * Exercise: read the text file with one line every 100 millis, using Resource
+   * (refactor the bracket exercise to use Resource
+   */
+  def releaseScanner: Scanner => IO[Unit] = scanner => IO(scanner.close())
+  def makeScanner(path: String) = Resource.make(openFileScanner(path))(releaseScanner)
+  def resourceReadFile(path: String): IO[Unit] =
+      makeScanner(path).use(scanner=> readLineByLine(scanner))
+
+  override def run: IO[Unit] = resourceReadFile("src/main/scala/com/rockthejvm/part3concurrency/Resources.scala")
+
 }
