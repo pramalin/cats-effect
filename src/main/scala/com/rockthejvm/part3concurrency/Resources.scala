@@ -98,8 +98,16 @@ object Resources extends IOApp.Simple {
    */
   def releaseScanner: Scanner => IO[Unit] = scanner => IO(scanner.close())
   def makeScanner(path: String) = Resource.make(openFileScanner(path))(releaseScanner)
-  def resourceReadFile(path: String): IO[Unit] =
+  def myResourceReadFile(path: String): IO[Unit] =
       makeScanner(path).use(scanner=> readLineByLine(scanner))
+
+  def getResouceFromFile(path: String) = Resource.make(openFileScanner(path)) { scanner =>
+    IO("closing file").debug >> IO(scanner.close())
+  }
+
+  def resourceReadFile(path: String) = getResouceFromFile(path).use { scanner =>
+    readLineByLine(scanner)
+  }
 
   override def run: IO[Unit] = resourceReadFile("src/main/scala/com/rockthejvm/part3concurrency/Resources.scala")
 
