@@ -1,5 +1,6 @@
 package com.rockthejvm.part3concurrency
 
+import cats.effect.kernel.Outcome.{Canceled, Errored, Succeeded}
 import cats.effect.{IO, IOApp, Resource}
 
 import java.io.{File, FileReader}
@@ -105,10 +106,44 @@ object Resources extends IOApp.Simple {
     IO("closing file").debug >> IO(scanner.close())
   }
 
-  def resourceReadFile(path: String) = getResouceFromFile(path).use { scanner =>
-    readLineByLine(scanner)
+  def resourceReadFile(path: String) =
+    IO(s"opening file at $path") >>
+    getResouceFromFile(path).use { scanner =>
+      readLineByLine(scanner)
+    }
+
+  def cancelReadFile(path: String) = for {
+    fib <- resourceReadFile(path).start
+    _ <- IO.sleep(2.seconds) >> fib.cancel
+  } yield ()
+
+  // nested resources
+  def connFromConfResource(path: String) =
+    Resource.make(IO("opening file").debug >> openFileScanner(path))(scanner => IO("closing file").debug >> IO(scanner.close()))
+      .flatMap(scanner =>
+        Resource.make(IO(new Connection(scanner.nextLine())))(conn => conn.close().void))
+  // equivalent
+  def connFromConfResourceClean(path: String) = for {
+    scanner <- Resource.make(IO("opening file").debug >> openFileScanner(path))(scanner => IO("closing file").debug >> IO(scanner.close()))
+    conn <- Resource.make(IO(new Connection(scanner.nextLine())))(conn => conn.close().void)
+  } yield conn
+
+  val openConnection = connFromConfResourceClean("src/main/resources/connection.txt").use(conn => conn.open() >> IO.never)
+  val cancelConnection = for {
+    fib <- openConnection.start
+    _ <- IO.sleep(1.second) >> IO("cancelling").debug >> fib.cancel
+  } yield ()
+
+  // connection + file will close automatically
+
+  // finalizers to regular ios
+  val ioWithFinalizer = IO("some resource").debug.guarantee(IO("freeing resource").debug.void)  
+  val ioWithFinalizer_v2 = IO("some resource").debug.guaranteeCase {
+    case Succeeded(result) => IO(s"releasing resource: $result").debug.void
+    case Errored(e) => IO("nothing to release").debug.void
+    case Canceled() => IO("resource get canceled, releasing what's left").debug.void
   }
 
-  override def run: IO[Unit] = resourceReadFile("src/main/scala/com/rockthejvm/part3concurrency/Resources.scala")
+  override def run: IO[Unit] = ioWithFinalizer.void
 
 }
