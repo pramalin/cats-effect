@@ -50,16 +50,41 @@ object RacingIOs extends IOApp.Simple {
 
   /**
    * Exercises:
-   * Implement a timeout pattern with race
+   * 1 - implement a timeout pattern with race
+   * 2 - a method to return LOSING effect from a race (hint: use racePair)
+   * 3 - implement race in terms of racePair
    */
+  // 1
   def timeout[A](io: IO[A], duration: FiniteDuration): IO[A] = {
       val timeoutIO = IO("Cancelling").debug >> IO.sleep(duration)
       val raceResult = IO.race(timeoutIO, io)
-    
+
       raceResult.flatMap {
         case Left(()) => IO.raiseError(new RuntimeException("timedout"))
         case Right(a) => IO(a)
       }
+  }
+
+  // 2
+  def unrace[A, B](ioa: IO[A], iob: IO[B]): IO[Either[A, B]] = {
+    val failed = IO.racePair(ioa, iob).flatMap {
+      case Left((outA, fibB)) => IO(Right(fibB))
+      case Right((fibA, outB)) => IO(Left(fibA))
+    }
+
+    val result = failed.map((aOrb => aOrb.flatMap {
+            case Left(a: Fiber[IO, Throwable, A]) => a
+            case Right(b: Fiber[IO, Throwable, B]) => b
+          }
+        )
+  }
+
+  // 3
+  def simpleRace[A, B](ioa: IO[A], iob: IO[B]): IO[Either[A, B]] = {
+    IO.racePair(ioa, iob).flatMap {
+      case Left((outA, fibB)) => IO(Left(outA))
+      case Right((fibA, outB)) => IO(Right(outB))
+    }
   }
 
   override def run: IO[Unit] = testRacePair().void
