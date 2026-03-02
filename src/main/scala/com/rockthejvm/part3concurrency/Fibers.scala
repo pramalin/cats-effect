@@ -39,7 +39,7 @@ object Fibers extends IOApp.Simple {
       possible outcomes:
       - success with an IO
       - failure with an exception
-      - cancelled
+      - canceled
    */
 
   val sumIOOnAnotherThread = runOnSomeOtherThread(meaningOfLife)
