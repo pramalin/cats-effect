@@ -1,6 +1,7 @@
 package com.rockthejvm.part3concurrency
 
 import cats.effect.kernel.Outcome
+import cats.effect.kernel.Outcome.{Canceled, Errored, Succeeded}
 import cats.effect.{Fiber, IO, IOApp}
 
 import concurrent.duration.FiniteDuration
@@ -64,7 +65,7 @@ object RacingIOs extends IOApp.Simple {
         case Right(a) => IO(a)
       }
   }
-
+/*
   // 2
   def unrace[A, B](ioa: IO[A], iob: IO[B]): IO[Either[A, B]] = {
     val failed = IO.racePair(ioa, iob).flatMap {
@@ -73,7 +74,7 @@ object RacingIOs extends IOApp.Simple {
     }
 
     val result = failed.map((aOrb => aOrb.flatMap {
-            case Left(a: Fiber[IO, Throwable, A]) => a
+            case Left(a: Fiber[IO, Throwable, A]) => IO.raiseError(new RuntimeException("io A erroed"))
             case Right(b: Fiber[IO, Throwable, B]) => b
           }
         )
@@ -86,6 +87,74 @@ object RacingIOs extends IOApp.Simple {
       case Right((fibA, outB)) => IO(Right(outB))
     }
   }
+*/
 
-  override def run: IO[Unit] = testRacePair().void
+  // 2
+  def unrace[A, B](ioa: IO[A], iob: IO[B]): IO[Either[A, B]] =
+    IO.racePair(ioa, iob).flatMap {
+      case Left((_, fibB)) => fibB.join.flatMap {
+        case Succeeded(resultEffect) => resultEffect.map(result => Right(result))
+        case Errored(e) => IO.raiseError(e)
+        case Canceled() => IO.raiseError(new RuntimeException("Loser canceled"))
+      }
+
+      case Right((fibA, _)) => fibA.join.flatMap {
+        case Succeeded(resultEffect) => resultEffect.map(result => Left(result))
+        case Errored(e) => IO.raiseError(e)
+        case Canceled() => IO.raiseError(new RuntimeException("Loser canceled"))
+      }
+    }
+
+  def testUnrace() = {
+    val meaningOfLife = runWithSleep(42, 1.second)
+    val favLang = runWithSleep("Scala", 2.seconds)
+    val first: IO[Either[Int, String]] = unrace(meaningOfLife, favLang)
+    /*
+      - both IOs run on separate fibers
+      - the first one to finish will complete the result
+      - the loser will be canceled
+     */
+
+    first.flatMap {
+      case Left(mol) => IO(s"Meaning of life won: $mol")
+      case Right(lang) => IO(s"Fav language won: $lang")
+    }
+  }
+
+
+  // 3
+  def simpleRace[A, B](ioa: IO[A], iob: IO[B]): IO[Either[A, B]] =
+    IO.racePair(ioa, iob).flatMap {
+      case Left((outA, fibB)) => outA match {
+        case Succeeded(effectA) => fibB.cancel >> effectA.map(a => Left(a))
+        case Errored(e) => fibB.cancel >> IO.raiseError(e)
+        case Canceled() => fibB.join.flatMap {
+          case Succeeded(effectB) => fibB.cancel >> effectB.map(b => Right(b))
+          case Errored(e) => IO.raiseError(e)
+          case Canceled() => IO.raiseError(new RuntimeException("Both computations canceled"))
+        }
+      }
+
+      case Right((fibA, outB)) => outB match {
+        case Succeeded(effectB) => fibA.cancel >> effectB.map(b => Right(b))
+        case Errored(e) => fibA.cancel >> IO.raiseError(e)
+        case Canceled() => fibA.join.flatMap {
+          case Succeeded(effectA) => fibA.cancel >> effectA.map(a => Left(a))
+          case Errored(e) => IO.raiseError(e)
+          case Canceled() => IO.raiseError(new RuntimeException("Both computations canceled"))
+        }
+      }
+
+    }
+
+  // io will be canceled.
+  def testTimeout = timeout(IO.sleep(2.seconds) >> IO(42).debug, 1.second)
+  // io will succeed
+  def testTimeout_v2 = timeout(IO.sleep(2.seconds) >> IO(42).debug, 3.second)
+
+  // cats timeout
+  val importantTask = IO.sleep(2.seconds) >> IO(42).debug
+  def testTimeout_v3 = importantTask.timeout(1.second)
+
+  override def run: IO[Unit] = testUnrace().debug.void
 }
