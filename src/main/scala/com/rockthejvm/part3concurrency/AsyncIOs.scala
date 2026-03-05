@@ -6,12 +6,13 @@ import java.util.concurrent.Executors
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
 import com.rockthejvm.utils.*
+import scala.concurrent.duration._
 
 object AsyncIOs extends IOApp.Simple {
 
   // IOs can run asynchronously on fibers, without having to manually manage the fiber lifecycle
   val threadPool = Executors.newFixedThreadPool(8)
-  val ec: ExecutionContext = ExecutionContext.fromExecutorService(threadPool)
+  given ec: ExecutionContext = ExecutionContext.fromExecutorService(threadPool)
   type Callback[A] = Either[Throwable, A] => Unit
 
 
@@ -64,10 +65,10 @@ object AsyncIOs extends IOApp.Simple {
 
   /*
    * Exercise
-   * - lift the Future into IO using Async
+   * - lift an async computationas a Future, to an IO.
    */
-  lazy val molFuture: Future[Int] = Future {computeMeaingOfLife()} (ec)
 
+  // my answer
   val ioFuture = {
     IO.async_ { cb =>
       val result = Try(ec.execute { () =>
@@ -77,6 +78,51 @@ object AsyncIOs extends IOApp.Simple {
     }
   }
 
+  def convertFutureToIO[A](future: => Future[A]): IO[A] =
+    IO.async_ { (cb: Callback[A]) =>
+      future.onComplete { tryResult =>
+        val result = tryResult.toEither
+        cb(result)
+      }
+    }
 
-  override def run: IO[Unit] = asyncMolIO_v2.debug >> IO(threadPool.shutdown())
+  lazy val molFuture: Future[Int] = Future {computeMeaingOfLife()}
+  val asyncMolIO_v3: IO[Int] = convertFutureToIO(molFuture)
+  val asyncMolIO_v4: IO[Int] = IO.fromFuture(IO(molFuture)) // CE API
+
+  /**
+   * Exercise: a never-ending IO?
+   */
+  val neverEndingIO: IO[Int] = IO.async_[Int](_ => ()) // no callback, no finish
+  val neverEndingIO_v2: IO[Int] = IO.never
+
+  /*
+    FULL ASYNC call
+   */
+  def demoAsyncCancellation() = {
+    val asyncMeaningOfLifeIO_v2: IO[Int] = IO.async {(cb: Callback[Int]) =>
+      /*
+        finalizer in case of computation get canceled.
+        finalizers are of type IO[Unit]
+        not specifying finalizer => Option[IO[Unit]]
+        creating option is an effect => IO[Option[Option[IO[Unit]]]]
+       */
+      // return IO[Option[IO[Unit]]]
+      IO {
+        threadPool.execute { () =>
+          val result = computeMeaingOfLifeEither()
+          cb(result)
+        }
+      }.as(Some(IO("Cancelled!").debug.void))
+    }
+
+    for {
+      fib <- asyncMeaningOfLifeIO_v2.start
+      _ <- IO.sleep(500.millis) >> IO("cancelling...").debug >> fib.cancel
+      _ <- fib.join
+    } yield ()
+
+  }
+
+  override def run: IO[Unit] = demoAsyncCancellation().debug >> IO(threadPool.shutdown())
 }
