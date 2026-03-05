@@ -35,7 +35,7 @@ object AsyncIOs extends IOApp.Simple {
   /**
    * Exercise
    */
-  def asyncToIO[A](computation: () => A)(ec: ExecutionContext): IO[A] =
+  def myAsyncToIO[A](computation: () => A)(ec: ExecutionContext): IO[A] =
     IO.async_ { cb =>
       ec.execute { () => {
         val result: Either[Throwable, A] = Try {
@@ -46,6 +46,15 @@ object AsyncIOs extends IOApp.Simple {
         }
       }
     }
+
+  def asyncToIO[A](computation: () => A)(ec: ExecutionContext): IO[A] =
+    IO.async_ {(cb: Callback[A]) =>
+      ec.execute { () => {
+        val result = Try(computation()).toEither
+        cb(result)
+      }
+    }
+    
 
   override def run: IO[Unit] = asyncMolIO.debug >> IO(threadPool.shutdown())
 }
