@@ -204,7 +204,5 @@ object Defers extends IOApp.Simple {
     }
   }
 
-  IO.racePair()
-
   override def run: IO[Unit] = eggBoiler()
 }
