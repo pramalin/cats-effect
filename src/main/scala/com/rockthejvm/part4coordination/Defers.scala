@@ -113,6 +113,7 @@ object Defers extends IOApp.Simple {
    *     (hint2: use a guarantee call to make sure the fibers complete the Deferred)
    *   - what do you do in case of cancellation (the hardest part)?
    */
+  // 1
   def alarmNotification() : IO[Unit] = {
     def clockUp(countRef: Ref[IO, Int]): IO[Unit] =
       IO(s"[clock] counting...").debug >> IO.sleep(1.second) >> countRef.update(count => count + 1) >> clockUp(countRef)
@@ -132,6 +133,7 @@ object Defers extends IOApp.Simple {
     } yield ()
   }
 
+  // 2
   type RaceResult[A, B] = Either[
     (Outcome[IO, Throwable, A], Fiber[IO, Throwable, B]), // (winner result, looser fiber)
     (Fiber[IO, Throwable, A], Outcome[IO, Throwable, B]) // (looser fiber, winner result)
@@ -156,6 +158,53 @@ object Defers extends IOApp.Simple {
   } yield (outA, outB)
 */
 
+  // 1
+  def eggBoiler(): IO[Unit] = {
+    def eggReadyNotification(signal: Deferred[IO, Unit]) = for {
+      _ <- IO("Egg boiling on some other fiber, waiting...").debug
+      _ <- signal.get
+      _ <- IO("EGG READY").debug
+    } yield ()
 
-  override def run: IO[Unit] = alarmNotification()
+    def tickingClock(ticks: Ref[IO, Int], signal: Deferred[IO, Unit]): IO[Unit] = for {
+      _ <- IO.sleep(1.second)
+      count <- ticks.updateAndGet(_ + 1)
+      _ <- IO(count).debug
+      _ <- if (count >= 10) signal.complete(()) else tickingClock(ticks, signal)
+    } yield ()
+
+    for {
+      counter <- Ref[IO].of(0)
+      signal <- Deferred[IO, Unit]
+      notificationFib <- eggReadyNotification(signal).start
+      clock <- tickingClock(counter, signal).start
+      _ <- notificationFib.join
+      _ <- clock.join
+    } yield ()
+  }
+
+  // 2
+  type EitherOutcome[A, B] = Either[Outcome[IO, Throwable, A], Outcome[IO, Throwable, B]]
+  def ourRacer[A, B](ioa: IO[A], iob: IO[B]): IO[RaceResult[A, B]] = IO.uncancelable { poll =>
+    for {
+      signal <- Deferred[IO, EitherOutcome[A, B]]
+      fibA <- ioa.guaranteeCase(outcomeA => signal.complete(Left(outcomeA)).void).start
+      fibB <- iob.guaranteeCase(outcomeB => signal.complete(Right(outcomeB)).void).start
+      result <- poll(signal.get).onCancel { // blocking call - should be cancelable
+          for {
+            cancelFibA <- fibA.cancel.start
+            cancelFibB <- fibB.cancel.start
+            _ <- cancelFibA.join
+            _ <- cancelFibB.join
+          } yield ()
+        }
+      } yield result match {
+      case Left(outcomeA) => Left((outcomeA, fibB))
+      case Right(outcomeB) => Right((fibA, outcomeB))
+    }
+  }
+
+  IO.racePair()
+
+  override def run: IO[Unit] = eggBoiler()
 }
