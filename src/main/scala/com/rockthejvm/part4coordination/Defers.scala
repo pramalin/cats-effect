@@ -1,9 +1,12 @@
 package com.rockthejvm.part4coordination
 
+import cats.effect.kernel.Outcome.{Canceled, Errored, Succeeded}
+import cats.effect.kernel.{Fiber, Outcome}
 import cats.effect.{Deferred, IO, IOApp, Ref}
-import com.rockthejvm.utils._
-import scala.concurrent.duration._
-import cats.syntax.traverse._
+import com.rockthejvm.utils.*
+
+import scala.concurrent.duration.*
+import cats.syntax.traverse.*
 
 object Defers extends IOApp.Simple {
 
@@ -108,12 +111,51 @@ object Defers extends IOApp.Simple {
    *   - on completion (with any status), each IO needs to complete that Deferred
    *     (hint: use a finalizer from the Resources lesson)
    *     (hint2: use a guarantee call to make sure the fibers complete the Deferred)
-   *   - what do you do in case of cancwllation (the hardest part)?
+   *   - what do you do in case of cancellation (the hardest part)?
    */
   def alarmNotification() : IO[Unit] = {
+    def clockUp(countRef: Ref[IO, Int]): IO[Unit] =
+      IO(s"[clock] counting...").debug >> IO.sleep(1.second) >> countRef.update(count => count + 1) >> clockUp(countRef)
 
+    def notifyTimeup(countRef: Ref[IO, Int]): IO[Unit] = for {
+      count <- countRef.get
+      _ <- if (count >= 10) IO("[notifier] time's up").debug
+           else notifyTimeup(countRef)
+    } yield ()
 
+    for {
+      clockRef <- Ref[IO].of(0)
+      notifier <- notifyTimeup(clockRef).start
+      clock <- clockUp(clockRef).start
+      _ <- notifier.join
+      _ <- clock.join
+    } yield ()
   }
 
-  override def run: IO[Unit] = fileNotifierWithDeferred()
+  type RaceResult[A, B] = Either[
+    (Outcome[IO, Throwable, A], Fiber[IO, Throwable, B]), // (winner result, looser fiber)
+    (Fiber[IO, Throwable, A], Outcome[IO, Throwable, B]) // (looser fiber, winner result)
+  ]
+/* my incomplete answer
+  def ourRacer[A, B](ioa: IO[A], iob: IO[B]): IO[RaceResult[A, B]] = for {
+    fibA <- ioa.start
+    fibB <- iob.start
+    signalA <- IO.deferred[A]
+    signalB <- IO.deferred[B]
+    outA <- fibA.join.flatMap {
+      case Succeeded(resultEffect) => resultEffect.map(result => Left(result))
+      case Errored(e) => IO.raiseError(e)
+      case Canceled() => IO.raiseError(new RuntimeException("Loser canceled"))
+    }
+    outB <- fibB.join.flatMap {
+      case Succeeded(resultEffect) => resultEffect.map(result => Left(result))
+      case Errored(e) => IO.raiseError(e)
+      case Canceled() => IO.raiseError(new RuntimeException("Loser canceled"))
+    }
+
+  } yield (outA, outB)
+*/
+
+
+  override def run: IO[Unit] = alarmNotification()
 }
