@@ -76,30 +76,37 @@ object PolymorphicCancellation extends IOApp.Simple {
   /**
    * Exercise - generalize a piece of code
    */
-  // hint use this instead of IO.sleep
+  // hint: use this instead of IO.sleep
   def unsafeSleep[F[_], E](duration: FiniteDuration)(using mc: MonadCancel[F, E]): F[Unit] =
-    mc.pure(Thread.sleep(duration.toMillis))
+    mc.pure(Thread.sleep(duration.toMillis)) // not semantically blocking
 
+  def inputPassword[F[_], E](using mc: MonadCancel[F, E]): F[String] = for {
+    _ <- mc.pure("Input password:").debug
+    _ <- mc.pure("typing password").debug
+    _ <- unsafeSleep[F, E](5.seconds)
+    pw <- mc.pure("RockTheJVM1!")
+  } yield pw
 
-  val inputPassword = IO("Input password:").debug >> IO("typing password").debug >> IO.sleep(5.seconds) >> IO ("RockTheJVM1!")
-  val verifyPassword = (pw: String) => IO("verifying...").debug >> IO.sleep(2.seconds) >> IO(pw == "RockTheJVM1!")
+  def verifyPassword[F[_], E](pw: String)(using mc: MonadCancel[F, E]): F[Boolean] = for {
+    _ <- mc.pure("verifying...").debug
+    _ <- unsafeSleep(2.seconds)
+    verified <- mc.pure(pw == "RockTheJVM1!")
+  } yield verified
 
-  val authFlow: IO[Unit] = IO.uncancelable { poll =>
+  def authFlow[F[_], E](using mc: MonadCancel[F, E]): F[Unit] = mc.uncancelable { poll =>
     for {
-      pw <- poll(inputPassword).onCancel(IO("Authentication timed out. Try again later.").debug.void) // poll makes this cancelable
+      pw <- poll(inputPassword).onCancel(mc.pure("Authentication timed out. Try again later.").debug.void) // poll makes this cancelable
       verified <- verifyPassword(pw)
-      _ <- if (verified) IO("Authentication successful.").debug
-      else IO("Authentication failed.").debug
+      _ <- if (verified) mc.pure("Authentication successful.").debug
+      else mc.pure("Authentication failed.").debug
     } yield ()
   }
 
-  val authProgram = for {
-    authFib <- authFlow.start
+  val authProgram: IO[Unit] = for {
+    authFib <- authFlow[IO, Throwable].start
     _ <- IO.sleep(3.seconds) >> IO("Authentication timeout, attempting cancel...").debug >> authFib.cancel
     _ <- authFib.join
   } yield ()
-
-
 
   override def run: IO[Unit] = authProgram
 }
