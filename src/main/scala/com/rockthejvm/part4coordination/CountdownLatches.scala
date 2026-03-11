@@ -1,9 +1,8 @@
 package com.rockthejvm.part4coordination
 
 import cats.effect
-import cats.effect.kernel.Deferred
 import cats.effect.std.CountDownLatch
-import cats.effect.{IO, IOApp, Ref, Resource}
+import cats.effect.{Deferred, IO, IOApp, Ref, Resource}
 
 import scala.concurrent.duration.*
 import com.rockthejvm.utils.*
@@ -189,7 +188,7 @@ object CDLatch {
 
 
   def apply(count: Int): IO[CDLatch] = for {
-    signal <- effect.Deferred[IO, Unit]
+    signal <- Deferred[IO, Unit]
     state <- Ref[IO].of[State](Live(count, signal))
   } yield new CDLatch {
     override def await: IO[Unit] = state.get.flatMap { s =>
