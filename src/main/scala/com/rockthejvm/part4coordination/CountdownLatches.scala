@@ -6,10 +6,11 @@ import cats.effect.{IO, IOApp, Resource}
 import scala.concurrent.duration.*
 import com.rockthejvm.utils.*
 import cats.syntax.parallel.*
+import cats.syntax.traverse.*
 
-import java.io.FileWriter
-import java.io.File
+import java.io.{File, FileWriter}
 import scala.io.Source
+import scala.util.Random
 
 object CountdownLatches extends IOApp.Simple {
 
@@ -101,5 +102,24 @@ object CountdownLatches extends IOApp.Simple {
     _ <- writeToFile(s"$destFolder/$filename", tmpFile) ???
   } yield ()
 */
-  override def run: IO[Unit] = sprint()
+  // solution
+  def createFileDownloaderTask(id: Int, latch: CountDownLatch[IO], filename: String, destFolder: String): IO[Unit] = for {
+    _ <- IO(s"[task $id] downloading chunk...").debug
+    _ <- IO.sleep(Random.nextDouble.toInt.millis)
+    chunk <- FileServer.getFileChunk(id)
+    _ <- writeToFile(s"$destFolder/$filename.part$id", chunk)
+    _ <- IO(s"[task $id] chunk download complete").debug
+    _ <- latch.release
+  } yield ()
+
+  def downloadFile(filename: String, destFolder: String): IO[Unit] = for {
+    n <- FileServer.getNumChunks
+    latch <- CountDownLatch[IO](n)
+    _ <- IO(s"Download started on  $n fibers").debug
+    _ <- (0 until n).toList.parTraverse(id => createFileDownloaderTask(id, latch, filename, destFolder))
+    _ <- latch.await
+    _ <- (0 until n).toList.traverse(id => appendFileContents(s"$destFolder/$filename.part$id", s"$destFolder/$filename"))
+  } yield ()
+
+  override def run: IO[Unit] = downloadFile("myScalafile.txt", "src/main/resources")
 }
