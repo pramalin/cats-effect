@@ -3,7 +3,8 @@ package com.rockthejvm.part5polymorphic
 import cats.effect.kernel.Outcome.{Canceled, Errored, Succeeded}
 import cats.{Applicative, Monad}
 import cats.effect.{IO, IOApp, MonadCancel, Poll}
-import com.rockthejvm.utils._
+import com.rockthejvm.utils.general._
+import scala.concurrent.duration._
 
 object PolymorphicCancellation extends IOApp.Simple {
 
@@ -72,6 +73,33 @@ object PolymorphicCancellation extends IOApp.Simple {
     IO(s"releasing the meaning of life...").debug.void
   }
 
+  /**
+   * Exercise - generalize a piece of code
+   */
+  // hint use this instead of IO.sleep
+  def unsafeSleep[F[_], E](duration: FiniteDuration)(using mc: MonadCancel[F, E]): F[Unit] =
+    mc.pure(Thread.sleep(duration.toMillis))
 
-  override def run: IO[Unit] = ???
+
+  val inputPassword = IO("Input password:").debug >> IO("typing password").debug >> IO.sleep(5.seconds) >> IO ("RockTheJVM1!")
+  val verifyPassword = (pw: String) => IO("verifying...").debug >> IO.sleep(2.seconds) >> IO(pw == "RockTheJVM1!")
+
+  val authFlow: IO[Unit] = IO.uncancelable { poll =>
+    for {
+      pw <- poll(inputPassword).onCancel(IO("Authentication timed out. Try again later.").debug.void) // poll makes this cancelable
+      verified <- verifyPassword(pw)
+      _ <- if (verified) IO("Authentication successful.").debug
+      else IO("Authentication failed.").debug
+    } yield ()
+  }
+
+  val authProgram = for {
+    authFib <- authFlow.start
+    _ <- IO.sleep(3.seconds) >> IO("Authentication timeout, attempting cancel...").debug >> authFib.cancel
+    _ <- authFib.join
+  } yield ()
+
+
+
+  override def run: IO[Unit] = authProgram
 }
