@@ -1,5 +1,6 @@
 package com.rockthejvm.part4coordination
 
+import cats.effect
 import cats.effect.kernel.Deferred
 import cats.effect.std.CountDownLatch
 import cats.effect.{IO, IOApp, Ref, Resource}
@@ -129,7 +130,7 @@ object CountdownLatches extends IOApp.Simple {
 /**
  * Exercise: implement your own CDLatch with Ref and Deferred.
  */
-
+/* my answer
 abstract class CDLatch {
   def await: IO[Unit]
   def release: IO[Unit]
@@ -173,3 +174,34 @@ object CDLatch {
     }.flatten
   }
 }
+*/
+
+// Solution
+abstract class CDLatch {
+  def await: IO[Unit]
+  def release: IO[Unit]
+}
+
+object CDLatch {
+  sealed trait State
+  case object Done extends State
+  case class Live(remainingCount: Int, signal: Deferred[IO, Unit]) extends State
+
+
+  def apply(count: Int): IO[CDLatch] = for {
+    signal <- effect.Deferred[IO, Unit]
+    state <- Ref[IO].of[State](Live(count, signal))
+  } yield new CDLatch {
+    override def await: IO[Unit] = state.get.flatMap { s =>
+      if (s == Done) IO.unit // continue, the latch is dead
+      else signal.get // block here
+    }
+
+    override def release: IO[Unit] = state.modify {
+      case Done => Done -> IO.unit
+      case Live(1, signal) => Done -> signal.complete(()).void
+      case Live(n, signal) => Live(n - 1, signal) -> IO.unit
+    }.flatten.uncancelable
+  }
+}
+
