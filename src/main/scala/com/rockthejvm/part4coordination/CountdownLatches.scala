@@ -1,7 +1,8 @@
 package com.rockthejvm.part4coordination
 
+import cats.effect.kernel.Deferred
 import cats.effect.std.CountDownLatch
-import cats.effect.{IO, IOApp, Resource}
+import cats.effect.{IO, IOApp, Ref, Resource}
 
 import scala.concurrent.duration.*
 import com.rockthejvm.utils.*
@@ -9,6 +10,7 @@ import cats.syntax.parallel.*
 import cats.syntax.traverse.*
 
 import java.io.{File, FileWriter}
+import scala.collection.immutable.Queue
 import scala.io.Source
 import scala.util.Random
 
@@ -122,4 +124,52 @@ object CountdownLatches extends IOApp.Simple {
   } yield ()
 
   override def run: IO[Unit] = downloadFile("myScalafile.txt", "src/main/resources")
+}
+
+/**
+ * Exercise: implement your own CDLatch with Ref and Deferred.
+ */
+
+abstract class CDLatch {
+  def await: IO[Unit]
+  def release: IO[Unit]
+}
+
+object CDLatch {
+  type Signal = Deferred[IO, Unit]
+
+  case class State(locks: Int, waiting: Queue[Signal])
+
+  val unlocked = State(locks = 0, Queue())
+
+  def createSignal(): IO[Signal] = Deferred[IO, Unit]
+
+  def create: IO[CDLatch] = Ref[IO].of(unlocked).map(createCDLatchWithCancellation)
+
+  def createCDLatchWithCancellation(state: Ref[IO, State]): CDLatch = new CDLatch {
+    override def await = IO.uncancelable { poll =>
+      createSignal().flatMap { signal =>
+        val cleanup = state.modify {
+          case State(locks, queue) =>
+            val newQueue = queue.filterNot(_ eq signal)
+            State(locks, newQueue) -> release
+        }.flatten
+
+        state.modify {
+          case State(0, _) => State(locks = 0, Queue()) -> IO.unit // /*replaced tuple */ (State(locked = true, Queue()), IO.unit)
+          case State(n, queue) => State(locks = n, queue.enqueue(signal)) -> poll(signal.get).onCancel(cleanup) // (State(locked = true, queue.enqueue(signal)), signal.get)
+        }.flatten // modify returns IO[B], our B is IO[Unit], so modify returns IO[IO[Unit]], we need to flatten
+      }
+    }
+
+    override def release: IO[Unit] = state.modify {
+      case State(0, _) => unlocked -> IO.unit
+      case State(n, queue) =>
+        if (queue.isEmpty) unlocked -> IO.unit
+        else {
+          val (signal, rest) = queue.dequeue
+          State(locks = n - 1, rest) -> signal.complete(()).void
+        }
+    }.flatten
+  }
 }
