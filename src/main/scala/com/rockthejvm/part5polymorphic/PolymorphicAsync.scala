@@ -74,7 +74,13 @@ object PolymorphicAsync extends IOApp.Simple {
   def firstEffect[F[_]: Concurrent, A](a: A): F[A] = Concurrent[F].pure(a)
   def secondEffect[F[_]: Sync, A](a: A): F[A] = Sync[F].pure(a)
 
-  def tupledEffect[F[_], A](a: A): F[(A, A)] = ???
+  import cats.syntax.functor._
+  import cats.syntax.flatMap._
+
+  def tupledEffect[F[_] : Async, A](a: A): F[(A, A)] = for {
+    first <- firstEffect(a)
+    second <- secondEffect(a)
+  } yield (first, second)
 
   override def run: IO[Unit] = ???
 }
