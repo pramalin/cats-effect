@@ -105,5 +105,5 @@ object PolymorphicFibers extends IOApp.Simple {
   val race = ioRace(fast, slow)
   val race_v2 = generalRace(fast, slow)
 
-  override def run: IO[Unit] = race_v2.void
+  override def run: IO[Unit] = race.void
 }
